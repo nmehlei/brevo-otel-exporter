@@ -1,5 +1,5 @@
 {
-  "name": "brevo-quota-otel",
+  "name": "brevo-otel-exporter",
   "version": "0.1.0",
   "description": "Export Brevo mail-send quota and per-app usage as OpenTelemetry metrics",
   "license": "MIT",
@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "bin": {
-    "brevo-quota-otel": "dist/main.js"
+    "brevo-otel-exporter": "dist/main.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

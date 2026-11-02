@@ -1,7 +1,7 @@
 intervalSeconds: 300
 otlp:
   endpoint: http://localhost:4318      # OTLP/HTTP base URL
-  username: brevo-quota-otel           # optional basic auth
+  username: brevo-otel-exporter           # optional basic auth
   passwordEnv: OTLP_PASSWORD
 accounts:
   - name: main

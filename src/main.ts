@@ -33,7 +33,7 @@ export async function pollOnce(cfg: Config, deps: Deps): Promise<{ ok: number; f
   return { ok, failed };
 }
 
-const USAGE = `Usage: brevo-quota-otel --config <path> [--once]
+const USAGE = `Usage: brevo-otel-exporter --config <path> [--once]
 
   --config  path to the YAML config (see examples/config.yaml)
   --once    poll once, flush metrics and exit (exit 1 if every account failed)

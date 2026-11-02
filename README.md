@@ -1,4 +1,4 @@
-# brevo-quota-otel
+# brevo-otel-exporter
 
 Export your [Brevo](https://www.brevo.com) mail-send quota and **per-application usage** as
 OpenTelemetry metrics (OTLP/HTTP), so you can alert before the free tier's daily send limit is hit.

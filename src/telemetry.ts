@@ -58,10 +58,10 @@ export function createTelemetry(otlp: Config['otlp'], reader?: MetricReader, opt
     exportIntervalMillis: opts.intervalMs ?? 60_000,
   });
   const provider = new MeterProvider({
-    resource: resourceFromAttributes({ 'service.name': 'brevo-quota-otel' }),
+    resource: resourceFromAttributes({ 'service.name': 'brevo-otel-exporter' }),
     readers: [metricReader],
   });
-  const meter = provider.getMeter('brevo-quota-otel');
+  const meter = provider.getMeter('brevo-otel-exporter');
 
   const latest = new Map<string, { snap: AccountSnapshot; at: Date }>();
   const fresh = (at: Date) => now() - at.getTime() <= staleAfterMs;
