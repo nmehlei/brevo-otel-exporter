@@ -1,7 +1,8 @@
 # brevo-otel-exporter
 
-Export your [Brevo](https://www.brevo.com) mail-send quota and **per-application usage** as
-OpenTelemetry metrics (OTLP/HTTP), so you can alert before the free tier's daily send limit is hit.
+Export your [Brevo](https://www.brevo.com) mail-send quota, **per-application usage** and **delivery
+failures** as OpenTelemetry metrics and logs (OTLP/HTTP), so you can alert before the free tier's daily
+send limit is hit and notice mails that Brevo rejected or bounced.
 
 Brevo's daily limit is shared by the whole account, so one misbehaving app can silently use up the quota
 of all the others. This tool tells you how much is left and which app is using it.
@@ -19,8 +20,25 @@ Every `intervalSeconds` (default 300) the exporter polls each configured account
 | `brevo.email.sent_today` | gauge | `account` | Sends today (account timezone) |
 | `brevo.email.remaining` | gauge | `account` | Remaining sends reported by Brevo (omitted if the plan has no send limit) |
 | `brevo.email.sent_today.by_app` | gauge | `account`, `app` | Sends today per app; the rest is `app="unattributed"` |
+| `brevo.email.failed_today` | gauge | `account`, `event` | Failure events seen today per type (only with `events.enabled`; zeros included) |
 | `brevo.exporter.last_success_timestamp` | gauge | `account` | Unix seconds of the last good poll |
 | `brevo.exporter.poll_errors` | counter | `account`, `reason` | Failed polls (`http_429`, `http_5xx`, `http_4xx`, `timeout`, `network`, `parse`, `unexpected`) |
+
+## Logs
+
+- **Delivery failures** (`events.enabled: true`): every `hardBounces`, `softBounces`, `blocked`, `spam`,
+  `deferred`, `invalid` and `error` event becomes one OTLP log record, exactly once, with the event time as
+  timestamp, severity `ERROR` (`WARN` for soft bounces and deferrals) and the attributes `brevo.account`,
+  `brevo.event`, `brevo.message_id`, `brevo.sender`, `brevo.reason`, `app` (same attribution rules as above),
+  plus optionally `recipient.domain` and `email.subject`. **The recipient's address is never exported**, only
+  its domain. Use `includeSubject: false` / `includeRecipientDomain: false` to drop those too.
+  Typical findings: "sender not valid" (an unvalidated sender address), blocklisted sending IPs.
+- **The exporter's own log lines** (`logs: true`, default) are exported next to the JSON lines on stdout.
+
+The first run is a **baseline**: events that already exist are marked as seen and not replayed. Give
+`events.statePath` a writable path so that state survives restarts and `--once` runs (the file is
+`<statePath>.<account>.json`); without it the baseline is redone at every start.
+Events are polled every `events.intervalSeconds` (default 900), one API call per type per day.
 
 The daily limit is **not exposed by the Brevo API**, so you configure it (free tier: 300).
 
@@ -56,7 +74,7 @@ the per-app sum exceeds `sent_today`.
 
 - `sent_today + remaining` can differ from `daily_limit` by a few mails. Brevo's quota counter and its
   reporting window are not identical (we observed gaps of 1 to 12). Alert on ratios, not equality.
-- "Today" is the account's timezone day (from Brevo, or the `timezone` setting).
+- "Today" is the account's timezone day (from Brevo, or the `timezone` setting), capped at Brevo's UTC date (see below).
 - Events are listed per day, 500 per page (deduplicated by message id, capped at 200 pages). The free tier
   (300/day) fits in one page; for high-volume accounts prefer `tag` rules, which need no event listing.
 - If an account keeps failing, its quota gauges are dropped after 3 intervals (never shown as current
@@ -64,7 +82,8 @@ the per-app sum exceeds `sent_today`.
 - Failed OTLP exports are logged (`otlp export failed`) and make `--once` exit 1.
 - `brevo.exporter.poll_errors` counts per process lifetime, so it is meaningful in loop mode. With
   `--once` (a fresh process per run) alert on `last_success_timestamp` and the exit code instead.
-- Logs are JSON lines without trace or span IDs (the exporter creates no spans).
+- Logs carry no trace or span IDs: the exporter creates no spans (the OpenTelemetry JS trace SDK and the log/metric SDKs are not yet released on a compatible version line).
+- Brevo rejects dates later than its own (UTC) date, so between local midnight and UTC midnight (00:00 to 01:00 in Berlin in winter, to 02:00 in summer) the previous day's numbers are still shown.
 
 ## Alerts
 

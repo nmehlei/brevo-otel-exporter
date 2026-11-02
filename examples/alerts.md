@@ -9,6 +9,7 @@ Prometheus-style query languages they become underscores (`brevo_email_sent_toda
 | Quota critical | `brevo.email.sent_today / brevo.email.daily_limit > 0.9` per `account` |
 | Low remaining | `brevo.email.remaining < 30` per `account` |
 | One app dominates | `brevo.email.sent_today.by_app / brevo.email.sent_today > 0.8` per `account`, `app` when `sent_today > 50` |
+| Delivery failure | `brevo.email.failed_today > 0` per `account`, `event` (needs `events.enabled`); the matching log record names the app, sender and reason |
 | Exporter stale | `now() - brevo.exporter.last_success_timestamp > 3 * intervalSeconds` |
 | Poll errors | `increase(brevo.exporter.poll_errors[15m]) > 0` |
 

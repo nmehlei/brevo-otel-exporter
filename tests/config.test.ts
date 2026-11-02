@@ -76,4 +76,20 @@ accounts:
     expect(() => loadConfig(write('otlp: [unclosed token-ABC123'), {})).toThrow(/yaml/i);
     try { loadConfig(write('otlp: [unclosed token-ABC123'), {}); } catch (e) { expect(String(e)).not.toContain('token-ABC123'); }
   });
+  it('defaults: events disabled, logs enabled', () => {
+    const c = loadConfig(write(base()), { BREVO_KEY: 'x' });
+    expect(c.events.enabled).toBe(false);
+    expect(c.logs).toBe(true);
+    expect(c.events.types).toContain('hardBounces');
+    expect(c.events.intervalSeconds).toBe(900);
+  });
+  it('reads an events block', () => {
+    const yaml = base('events:\n  enabled: true\n  types: [error, blocked]\n  statePath: /tmp/s.json\n  includeSubject: false\nlogs: false\n');
+    const c = loadConfig(write(yaml), { BREVO_KEY: 'x' });
+    expect(c.events).toMatchObject({ enabled: true, types: ['error', 'blocked'], statePath: '/tmp/s.json', includeSubject: false });
+    expect(c.logs).toBe(false);
+  });
+  it('rejects an unknown event type', () => {
+    expect(() => loadConfig(write(base('events:\n  enabled: true\n  types: [nope]\n')), { BREVO_KEY: 'x' })).toThrow();
+  });
 });
