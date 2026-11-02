@@ -1,0 +1,14 @@
+intervalSeconds: 300
+otlp:
+  endpoint: http://localhost:4318      # OTLP/HTTP base URL
+  username: brevo-quota-otel           # optional basic auth
+  passwordEnv: OTLP_PASSWORD
+accounts:
+  - name: main
+    apiKeyEnv: BREVO_API_KEY           # or apiKeyFile: /run/secrets/brevo
+    dailyLimit: 300                    # free tier; not exposed by the Brevo API
+    # timezone: Europe/Berlin          # default: the account's own timezone
+    rules:                             # priority: tag, then sender, then subject
+      - { app: my-app, tag: my-app }
+      - { app: newsletter, sender: news@example.com }
+      - { app: reports, subject: "^Weekly report" }
