@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { BrevoClient, BrevoError } from './brevo.js';
 import { loadConfig, type AccountConfig, type Config } from './config.js';
@@ -19,6 +20,7 @@ export async function pollOnce(cfg: Config, deps: Deps): Promise<{ ok: number; f
     try {
       const snap = await takeSnapshot(deps.clientFor(a), a, deps.now());
       deps.telemetry.recordSuccess(snap, deps.now());
+      if (snap.overAttributed > 0) deps.log({ level: 'warn', msg: 'overlapping attribution rules: mails counted more than once', account: a.name, overAttributed: snap.overAttributed });
       deps.log({ level: 'info', msg: 'poll ok', account: a.name, sentToday: snap.sentToday, remaining: snap.remaining });
       ok++;
     } catch (e) {
@@ -46,7 +48,10 @@ async function cli(): Promise<void> {
   try { cfg = loadConfig(values.config!, process.env); }
   catch (e) { process.stderr.write(`${(e as Error).message}\n`); process.exit(2); }
 
-  const telemetry = createTelemetry(cfg.otlp);
+  const telemetry = createTelemetry(cfg.otlp, undefined, {
+    staleAfterMs: cfg.intervalSeconds * 3 * 1000,
+    onExportError: (message) => log({ level: 'error', msg: 'otlp export failed', error: message }),
+  });
   const clients = new Map<string, BrevoClient>();
   const deps: Deps = {
     clientFor: (a) => clients.get(a.name) ?? clients.set(a.name, new BrevoClient({ apiKey: a.apiKey })).get(a.name)!,
@@ -56,20 +61,25 @@ async function cli(): Promise<void> {
   if (values.once) {
     const r = await pollOnce(cfg, deps);
     await telemetry.flush(); await telemetry.shutdown();
-    process.exit(r.ok === 0 ? 1 : 0);
+    process.exit(r.ok === 0 || telemetry.exportFailures() > 0 ? 1 : 0);
   }
 
-  let stop = false;
-  const wake: { fn?: () => void } = {};
-  const onSignal = () => { stop = true; wake.fn?.(); };
-  process.on('SIGTERM', onSignal); process.on('SIGINT', onSignal);
+  const ac = new AbortController();
+  process.on('SIGTERM', () => ac.abort()); process.on('SIGINT', () => ac.abort());
   log({ level: 'info', msg: 'started', accounts: cfg.accounts.length, intervalSeconds: cfg.intervalSeconds });
-  while (!stop) {
-    await pollOnce(cfg, deps);
-    await new Promise<void>((res) => { wake.fn = res; setTimeout(res, cfg.intervalSeconds * 1000).unref(); });
-  }
+  await runLoop(async () => { await pollOnce(cfg, deps); }, cfg.intervalSeconds, ac.signal);
   await telemetry.flush(); await telemetry.shutdown();
   log({ level: 'info', msg: 'stopped' });
+}
+
+/** Polls until aborted. The sleep keeps the event loop alive and wakes immediately on abort. */
+export async function runLoop(poll: () => Promise<void>, intervalSeconds: number, signal: AbortSignal): Promise<void> {
+  while (!signal.aborted) {
+    await poll();
+    if (signal.aborted) return;
+    try { await sleep(intervalSeconds * 1000, undefined, { signal }); }
+    catch (e) { if ((e as Error).name !== 'AbortError') throw e; }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

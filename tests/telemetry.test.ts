@@ -6,13 +6,13 @@ import type { AccountSnapshot } from '../src/snapshot.js';
 const otlp = { endpoint: 'http://localhost:4318' };
 const snap = (o: Partial<AccountSnapshot> = {}): AccountSnapshot => ({
   account: 'main', dailyLimit: 300, sentToday: 168, remaining: 120,
-  byApp: new Map([['landgang', 165], ['unattributed', 3]]), ...o,
+  byApp: new Map([['landgang', 165], ['unattributed', 3]]), overAttributed: 0, ...o,
 });
 
 async function run(fn: (t: ReturnType<typeof createTelemetry>) => void) {
   const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
   const reader = new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 });
-  const t = createTelemetry(otlp, reader);
+  const t = createTelemetry(otlp, reader, { now: () => Date.parse('2026-11-02T10:00:30Z') });
   fn(t);
   await t.flush();
   const points = new Map<string, { value: number; attrs: Record<string, unknown> }[]>();

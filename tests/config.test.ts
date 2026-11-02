@@ -48,4 +48,32 @@ describe('loadConfig', () => {
     const yaml = base().replace('{ app: landgang, tag: landgang }', '{ app: landgang }');
     expect(() => loadConfig(write(yaml), { BREVO_KEY: 'x' })).toThrow();
   });
+  it('rejects an unknown timezone', () => {
+    const yaml = base().replace('dailyLimit: 300', 'dailyLimit: 300\n    timezone: Mars/Base');
+    expect(() => loadConfig(write(yaml), { BREVO_KEY: 'x' })).toThrow(/timezone/i);
+  });
+  it('rejects duplicate account names', () => {
+    const yaml = `otlp: { endpoint: "http://x" }
+accounts:
+  - { name: a, apiKeyEnv: K, dailyLimit: 300 }
+  - { name: a, apiKeyEnv: K, dailyLimit: 300 }
+`;
+    expect(() => loadConfig(write(yaml), { K: 'x' })).toThrow(/duplicate/i);
+  });
+  it('rejects apiKeyEnv together with apiKeyFile', () => {
+    const yaml = base().replace('apiKeyEnv: BREVO_KEY', 'apiKeyEnv: BREVO_KEY\n    apiKeyFile: /x');
+    expect(() => loadConfig(write(yaml), { BREVO_KEY: 'x' })).toThrow(/either/i);
+  });
+  it('rejects a username without a password', () => {
+    const yaml = base().replace('endpoint: http://localhost:4318', 'endpoint: http://localhost:4318\n  username: u');
+    expect(() => loadConfig(write(yaml), { BREVO_KEY: 'x' })).toThrow(/username|password/i);
+  });
+  it('strips a trailing /v1/metrics from the endpoint', () => {
+    const yaml = base().replace('http://localhost:4318', 'http://localhost:4318/v1/metrics');
+    expect(loadConfig(write(yaml), { BREVO_KEY: 'x' }).otlp.endpoint).toBe('http://localhost:4318');
+  });
+  it('does not echo YAML source text on a syntax error', () => {
+    expect(() => loadConfig(write('otlp: [unclosed token-ABC123'), {})).toThrow(/yaml/i);
+    try { loadConfig(write('otlp: [unclosed token-ABC123'), {}); } catch (e) { expect(String(e)).not.toContain('token-ABC123'); }
+  });
 });

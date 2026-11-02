@@ -40,7 +40,7 @@ describe('takeSnapshot', () => {
     const { c } = fake({ total: 0 });
     const s = await takeSnapshot(c, cfg([{ app: 'r', subject: 'x' }]), now);
     expect(s.sentToday).toBe(0);
-    expect(Object.fromEntries(s.byApp)).toEqual({ unattributed: 0 });
+    expect(Object.fromEntries(s.byApp)).toEqual({ r: 0, unattributed: 0 });
   });
   it('clamps negative credits and passes null through', async () => {
     expect((await takeSnapshot(fake({ credits: -3 }).c, cfg([]), now)).remaining).toBe(0);
@@ -49,5 +49,20 @@ describe('takeSnapshot', () => {
   it('propagates client errors', async () => {
     const c = { getAccount: async () => { throw new BrevoError('http_429', 'x'); } } as unknown as BrevoClient;
     await expect(takeSnapshot(c, cfg([]), now)).rejects.toMatchObject({ reason: 'http_429' });
+  });
+  it('reports a zero series for event-rule apps with no sends', async () => {
+    const { c } = fake({ total: 4, events: [] });
+    const s = await takeSnapshot(c, cfg([{ app: 'quiet', subject: '^nothing' }]), now);
+    expect(s.byApp.get('quiet')).toBe(0);
+  });
+  it('flags overlapping rules via overAttributed', async () => {
+    const { c } = fake({ total: 5, tags: { t: 4 }, events: [ev('Weekly 1'), ev('Weekly 2'), ev('Weekly 3')] });
+    const s = await takeSnapshot(c, cfg([{ app: 't', tag: 't' }, { app: 'w', subject: '^Weekly' }]), now);
+    expect(s.overAttributed).toBe(2);
+    expect(s.byApp.get('unattributed')).toBe(0);
+  });
+  it('has overAttributed 0 when sums reconcile', async () => {
+    const { c } = fake({ total: 5, tags: { t: 4 } });
+    expect((await takeSnapshot(c, cfg([{ app: 't', tag: 't' }]), now)).overAttributed).toBe(0);
   });
 });

@@ -8,7 +8,7 @@ accounts:
     apiKeyEnv: BREVO_API_KEY           # or apiKeyFile: /run/secrets/brevo
     dailyLimit: 300                    # free tier; not exposed by the Brevo API
     # timezone: Europe/Berlin          # default: the account's own timezone
-    rules:                             # priority: tag, then sender, then subject
+    rules:                             # sender/subject: first match in this order wins
       - { app: my-app, tag: my-app }
       - { app: newsletter, sender: news@example.com }
       - { app: reports, subject: "^Weekly report" }

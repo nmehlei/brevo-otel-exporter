@@ -12,5 +12,6 @@ Prometheus-style query languages they become underscores (`brevo_email_sent_toda
 | Exporter stale | `now() - brevo.exporter.last_success_timestamp > 3 * intervalSeconds` |
 | Poll errors | `increase(brevo.exporter.poll_errors[15m]) > 0` |
 
-The "stale" alert matters: if the exporter or Brevo's API is down, quota gauges simply stop updating and
-look "fine".
+The "stale" alert matters: if Brevo's API is unreachable, the quota gauges are dropped after 3 intervals
+(so they do not show yesterday's numbers), and `last_success_timestamp` is the only signal left.
+`poll_errors` is per process: use it in loop mode only; with `--once` rely on the staleness alert.

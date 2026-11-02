@@ -28,9 +28,11 @@ const account = z.object({
   apiKeyEnv: z.string().optional(),
   apiKeyFile: z.string().optional(),
   dailyLimit: z.number().int().positive(),
-  timezone: z.string().optional(),
+  timezone: z.string().refine((tz) => {
+    try { new Intl.DateTimeFormat('en-CA', { timeZone: tz }); return true; } catch { return false; }
+  }, { message: 'unknown timezone' }).optional(),
   rules: z.array(rule).default([]),
-}).refine((a) => a.apiKeyEnv || a.apiKeyFile, { message: 'account needs apiKeyEnv or apiKeyFile' });
+}).refine((a) => !!a.apiKeyEnv !== !!a.apiKeyFile, { message: 'set either apiKeyEnv or apiKeyFile (exactly one)' });
 
 const schema = z.object({
   intervalSeconds: z.number().int().min(30).default(300),
@@ -40,11 +42,14 @@ const schema = z.object({
     passwordEnv: z.string().optional(),
     headers: z.record(z.string(), z.string()).optional(),
   }),
-  accounts: z.array(account).min(1),
-});
+  accounts: z.array(account).min(1).refine((l) => new Set(l.map((a) => a.name)).size === l.length, { message: 'duplicate account names' }),
+}).refine((c) => !!c.otlp.username === !!c.otlp.passwordEnv, { message: 'otlp.username and otlp.passwordEnv must be set together' });
 
 export function loadConfig(path: string, env: NodeJS.ProcessEnv): Config {
-  const parsed = schema.safeParse(parse(readFileSync(path, 'utf8')));
+  let raw: unknown;
+  try { raw = parse(readFileSync(path, 'utf8')); }
+  catch (e) { throw new Error(`Invalid YAML in config file: ${(e as { code?: string }).code ?? 'syntax error'}`); }
+  const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(`Invalid config: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
   }
@@ -65,6 +70,6 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv): Config {
   return {
     accounts,
     intervalSeconds: c.intervalSeconds,
-    otlp: { endpoint: c.otlp.endpoint, username: c.otlp.username, password, headers: c.otlp.headers },
+    otlp: { endpoint: c.otlp.endpoint.replace(/\/(v1\/metrics)?\/?$/, ''), username: c.otlp.username, password, headers: c.otlp.headers },
   };
 }

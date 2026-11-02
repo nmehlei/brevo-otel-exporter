@@ -4,6 +4,8 @@ import { countByApp, withUnattributed } from './attribution.js';
 
 export interface AccountSnapshot {
   account: string; dailyLimit: number; sentToday: number; remaining: number | null; byApp: Map<string, number>;
+  /** Mails counted by more than one rule (sum of per-app counts minus sentToday, if positive). */
+  overAttributed: number;
 }
 
 export function localDay(now: Date, timezone: string): string {
@@ -21,15 +23,18 @@ export async function takeSnapshot(client: BrevoClient, cfg: AccountConfig, now:
   }
   const eventRules = cfg.rules.filter((r) => r.sender || r.subject);
   if (eventRules.length > 0) {
+    for (const r of eventRules) if (!byApp.has(r.app)) byApp.set(r.app, 0);
     for (const [app, n] of countByApp(await client.listSendEvents(day), eventRules)) {
       byApp.set(app, (byApp.get(app) ?? 0) + n);
     }
   }
+  const attributed = [...byApp.values()].reduce((a, b) => a + b, 0);
   return {
     account: cfg.name,
     dailyLimit: cfg.dailyLimit,
     sentToday,
     remaining: acct.remainingCredits === null ? null : Math.max(0, acct.remainingCredits),
     byApp: withUnattributed(byApp, sentToday),
+    overAttributed: Math.max(0, attributed - sentToday),
   };
 }
