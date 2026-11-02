@@ -28,7 +28,7 @@ The daily limit is **not exposed by the Brevo API**, so you configure it (free t
 
 ```
 docker run --rm -v ./config.yaml:/config.yaml:ro -e BREVO_API_KEY -e OTLP_PASSWORD \
-  ghcr.io/<owner>/brevo-quota-otel:<version> --config /config.yaml
+  ghcr.io/<owner>/<repo>:<version> --config /config.yaml
 ```
 
 `--once` polls once, flushes and exits (for cron, CronJobs or serverless). Without it the process loops
@@ -74,6 +74,13 @@ Examples for SigNoz and OpenObserve: [`examples/alerts.md`](examples/alerts.md).
 
 API keys come from an environment variable or a file, never from the config's values, and are not logged.
 Logs are JSON lines containing account names and error reasons only.
+
+## Versioning
+
+[GitVersion](https://gitversion.net) 5.x in Mainline mode (`GitVersion.yml`): every commit to `main` gets
+a new, higher version and CI publishes that image tag (plus `latest`). Commits bump the patch number;
+put `+semver: minor` or `+semver: major` in a commit message to bump those instead. The history starts
+from the tag `v0.1.0` on the first commit.
 
 ## Development
 

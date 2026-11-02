@@ -1,0 +1,8 @@
+# GitVersion 5.x, Mainline: every commit on main gets a new, higher version.
+mode: Mainline
+branches:
+  main:
+    increment: Patch
+    regex: ^main$
+ignore:
+  sha: []
