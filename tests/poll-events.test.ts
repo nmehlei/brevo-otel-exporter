@@ -143,6 +143,12 @@ describe('pollEvents', () => {
     await pollEvents(cfg(), h.deps, newEventsState());           // process 2: fresh in-memory state, same tracker/state file
     expect(new Set(asked)).toEqual(new Set(['2026-11-02', '2026-11-03']));
   });
+  it('returns the number of accounts whose events poll failed (drives the --once exit code)', async () => {
+    const h = harness({});
+    expect(await pollEvents(cfg(), h.deps, newEventsState())).toBe(0);
+    (h.deps.clientFor('' as never) as unknown as { listEvents: unknown }).listEvents = async () => { throw new BrevoError('http_5xx', 'x'); };
+    expect(await pollEvents(cfg(), h.deps, newEventsState())).toBe(1);
+  });
   it('counts the queried type in the failure counts', async () => {
     const h = harness({ error: [ev('a', 'Error')] });
     await pollEvents(cfg(), h.deps, newEventsState());

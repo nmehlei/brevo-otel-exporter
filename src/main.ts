@@ -32,8 +32,10 @@ class LogExportError extends Error {}
  * Delivery is at-least-once: events are only marked as exported (and the state file written) after the
  * OTLP log export succeeded; otherwise they are rolled back and sent again on the next poll.
  */
-export async function pollEvents(cfg: Config, deps: Deps, state: EventsState): Promise<void> {
-  if (!cfg.events.enabled || !deps.logs || !deps.trackerFor) return;
+/** Returns the number of accounts whose events poll failed. */
+export async function pollEvents(cfg: Config, deps: Deps, state: EventsState): Promise<number> {
+  let failed = 0;
+  if (!cfg.events.enabled || !deps.logs || !deps.trackerFor) return 0;
   const nowMs = deps.now().getTime();
   for (const a of cfg.accounts) {
     if (nowMs - (state.lastRun.get(a.name) ?? 0) < cfg.events.intervalSeconds * 1000) continue;
@@ -77,6 +79,7 @@ export async function pollEvents(cfg: Config, deps: Deps, state: EventsState): P
       state.lastRun.set(a.name, nowMs);
       deps.log({ level: 'info', msg: 'events polled', account: a.name, newFailures: emitted });
     } catch (e) {
+      failed++;
       tracker.rollback();
       const reason = e instanceof BrevoError ? e.reason : e instanceof LogExportError ? 'log_export' : 'unexpected';
       deps.telemetry.recordError(a.name, `events_${reason}`);
@@ -85,6 +88,7 @@ export async function pollEvents(cfg: Config, deps: Deps, state: EventsState): P
       deps.log({ level: 'error', msg: 'events poll failed', account: a.name, reason, error: detail });
     }
   }
+  return failed;
 }
 
 export async function pollOnce(cfg: Config, deps: Deps): Promise<{ ok: number; failed: number }> {
@@ -122,7 +126,7 @@ async function cli(): Promise<void> {
 
   if (cfg.events.enabled && cfg.events.statePath) {
     try { accessSync(dirname(cfg.events.statePath), constants.W_OK); }
-    catch { process.stderr.write(`events.statePath directory is not writable: ${dirname(cfg.events.statePath)}\n`); process.exit(2); }
+    catch { process.stderr.write(`events.statePath directory is missing or not writable: ${dirname(cfg.events.statePath)}\n`); process.exit(2); }
   }
   if (values.once && cfg.events.enabled && !cfg.events.statePath) {
     process.stderr.write('events.enabled with --once needs events.statePath, otherwise every run is a fresh baseline and no event is ever exported\n');
@@ -162,9 +166,9 @@ async function cli(): Promise<void> {
 
   if (values.once) {
     const r = await pollOnce(cfg, deps);
-    await pollEvents(cfg, deps, evState);
+    const eventFailures = await pollEvents(cfg, deps, evState);
     await telemetry.flush(); await logs.flush(); await telemetry.shutdown(); await logs.shutdown();
-    process.exit(r.ok === 0 || telemetry.exportFailures() + logs.exportFailures() > 0 ? 1 : 0);
+    process.exit(r.ok === 0 || eventFailures > 0 || telemetry.exportFailures() + logs.exportFailures() > 0 ? 1 : 0);
   }
 
   const ac = new AbortController();

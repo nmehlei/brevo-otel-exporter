@@ -49,6 +49,8 @@ first run is a **baseline**: events that already exist are marked as seen and no
 It is **required with `--once`**, otherwise every run would be a fresh baseline. A corrupt state file is
 moved to `*.corrupt` and logged as a warning.
 
+After more than one full day without a successful events poll, only the last polled day and today are read; failures of the days in between are not exported.
+
 Events are polled every `events.intervalSeconds` (default 900) in loop mode, one API call per type per
 day. With `--once` every run polls them, so a 5-minute cron costs about 7 extra calls per run.
 

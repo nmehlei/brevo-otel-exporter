@@ -10,10 +10,12 @@ export interface FailureEvent {
 
 const MAX_REASON = 500;
 const EMAIL = /[^\s<>"'@,;()[\]]+@([^\s<>"'(),;[\]]+)/g;
+const QUOTED_EMAIL = /"[^"]+"@([^\s<>"'(),;[\]]+)/g;
+const ENCODED_EMAIL = /[^\s<>"'@,;()[\]%]+%40([^\s<>"'(),;[\]%]+)/gi;
 
 /** Replaces the local part of any email address in free text, keeping the domain. */
 export function redact(text: string): string {
-  return text.replace(EMAIL, '<redacted>@$1');
+  return text.replace(QUOTED_EMAIL, '<redacted>@$1').replace(ENCODED_EMAIL, '<redacted>@$1').replace(EMAIL, '<redacted>@$1');
 }
 
 /** Reduces a Brevo event to what we are willing to export: never a recipient's address. */
@@ -74,6 +76,7 @@ export class EventTracker {
         for (const e of s.seen) this.seen.set(e.key, e.day);
         this.lastDay = s.lastDay;
         this.initialized = true;
+        this.initializedBeforeStage = true;
       } catch (e) {
         const code = (e as { code?: string }).code;
         if (code === 'EACCES' || code === 'EPERM') {
@@ -100,9 +103,10 @@ export class EventTracker {
     return out;
   }
 
-  commit(): void { this.staged = []; }
+  commit(): void { this.staged = []; this.initializedBeforeStage = this.initialized; }
 
   rollback(): void {
+    if (this.staged.length === 0) return;   // nothing staged: leave the baseline state alone
     for (const k of this.staged) this.seen.delete(k);
     this.staged = [];
     this.initialized = this.initializedBeforeStage;

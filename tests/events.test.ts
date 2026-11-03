@@ -34,6 +34,10 @@ describe('redaction', () => {
     expect(f.subject).toBe('Hello Jane (<redacted>@example.org)');
     expect(JSON.stringify(f)).not.toMatch(/jane\.doe/i);
   });
+  it('redacts quoted local parts and URL-encoded addresses', () => {
+    expect(redact('550 "john.doe"@example.com rejected')).toBe('550 <redacted>@example.com rejected');
+    expect(redact('retry bob%40example.com later')).toBe('retry <redacted>@example.com later');
+  });
   it('redact leaves text without addresses alone', () => expect(redact('sender not valid')).toBe('sender not valid'));
 });
 
@@ -121,6 +125,18 @@ describe('EventTracker', () => {
     expect(t.fresh([fe('a')], 'd')).toHaveLength(0);
     const fresh = new EventTracker(); fresh.fresh([fe('a')], 'd'); fresh.rollback();
     expect(fresh.fresh([fe('a')], 'd')).toEqual([]);        // still a baseline run
+  });
+  it('rollback before anything was staged does not re-arm the baseline (loaded state)', () => {
+    const p = join(dir(), 'state.json');
+    const t1 = new EventTracker(p); t1.fresh([fe('a')], 'd'); t1.commit(); t1.save();
+    const t2 = new EventTracker(p);
+    t2.rollback();                                           // e.g. the first poll failed before fresh()
+    expect(t2.fresh([fe('a'), fe('b')], 'd').map((e) => e.messageId)).toEqual(['b']);
+  });
+  it('rollback after a committed baseline and a failed poll keeps the tracker initialized', () => {
+    const t = new EventTracker(); t.fresh([fe('a')], 'd'); t.commit();   // baseline
+    t.rollback();                                                         // poll 2 failed during fetch
+    expect(t.fresh([fe('a'), fe('b')], 'd').map((e) => e.messageId)).toEqual(['b']);
   });
   it('persists lastDay', () => {
     const p = join(dir(), 'state.json');

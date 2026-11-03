@@ -48,6 +48,8 @@ export function createLogSink(otlp: Config['otlp'], processor?: LogRecordProcess
   const proc = processor ?? new BatchLogRecordProcessor({
     exporter: trackLogExport(new OTLPLogExporter({ url: `${otlp.endpoint.replace(/\/$/, '')}/v1/logs`, headers: otlpHeaders(otlp) }), state, onExportError),
     scheduledDelayMillis: 5_000,
+    maxQueueSize: 20_000,          // a backlog after downtime must not overflow the default 2048 and be dropped silently
+    maxExportBatchSize: 512,
   });
   const provider = new LoggerProvider({
     resource: buildResource(),
