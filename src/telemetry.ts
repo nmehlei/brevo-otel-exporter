@@ -1,11 +1,21 @@
 import { MeterProvider, PeriodicExportingMetricReader, type MetricReader, type PushMetricExporter } from '@opentelemetry/sdk-metrics';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { ExportResultCode } from '@opentelemetry/core';
-import { resourceFromAttributes } from '@opentelemetry/resources';
+import { buildResource } from './resource.js';
 import type { Config } from './config.js';
 import type { AccountSnapshot } from './snapshot.js';
 
+export function otlpHeaders(otlp: Config['otlp']): Record<string, string> {
+  const headers: Record<string, string> = { ...(otlp.headers ?? {}) };
+  if (otlp.username && otlp.password) {
+    headers['Authorization'] = `Basic ${Buffer.from(`${otlp.username}:${otlp.password}`).toString('base64')}`;
+  }
+  return headers;
+}
+
 export interface Telemetry {
+  /** Failure events seen today per type (zeros included for configured types). */
+  recordFailures(account: string, counts: Map<string, number>, at: Date): void;
   recordSuccess(s: AccountSnapshot, at: Date): void;
   recordError(account: string, reason: string): void;
   /** Number of failed OTLP exports so far. */
@@ -18,6 +28,8 @@ export interface TelemetryOptions {
   intervalMs?: number;
   /** Quota gauges of an account are dropped when its last good poll is older than this. */
   staleAfterMs?: number;
+  /** Failure counts are refreshed only every events interval, so they get their own (longer) window. */
+  failuresStaleAfterMs?: number;
   now?: () => number;
   onExportError?: (message: string) => void;
 }
@@ -49,21 +61,19 @@ export function createTelemetry(otlp: Config['otlp'], reader?: MetricReader, opt
   const staleAfterMs = opts.staleAfterMs ?? 15 * 60_000;
   const state: ExportState = { failures: 0, lastError: '' };
 
-  const headers: Record<string, string> = { ...(otlp.headers ?? {}) };
-  if (otlp.username && otlp.password) {
-    headers['Authorization'] = `Basic ${Buffer.from(`${otlp.username}:${otlp.password}`).toString('base64')}`;
-  }
+  const headers = otlpHeaders(otlp);
   const metricReader = reader ?? new PeriodicExportingMetricReader({
     exporter: trackExport(new OTLPMetricExporter({ url: `${otlp.endpoint.replace(/\/$/, '')}/v1/metrics`, headers }), state, opts.onExportError),
     exportIntervalMillis: opts.intervalMs ?? 60_000,
   });
   const provider = new MeterProvider({
-    resource: resourceFromAttributes({ 'service.name': 'brevo-otel-exporter' }),
+    resource: buildResource(),
     readers: [metricReader],
   });
   const meter = provider.getMeter('brevo-otel-exporter');
 
   const latest = new Map<string, { snap: AccountSnapshot; at: Date }>();
+  const failures = new Map<string, { counts: Map<string, number>; at: Date }>();
   const fresh = (at: Date) => now() - at.getTime() <= staleAfterMs;
 
   const gauge = (name: string, description: string, unit: string, alwaysExport: boolean,
@@ -84,10 +94,18 @@ export function createTelemetry(otlp: Config['otlp'], reader?: MetricReader, opt
   gauge('brevo.exporter.last_success_timestamp', 'Unix time of the last successful poll', 's', true, (s, at) =>
     [{ value: at.getTime() / 1000, attrs: { account: s.account } }]);
 
+  meter.createObservableGauge('brevo.email.failed_today', { description: 'Failure events seen today per type', unit: '{email}' }).addCallback((r) => {
+    for (const [account, { counts, at }] of failures) {
+      if (now() - at.getTime() > (opts.failuresStaleAfterMs ?? staleAfterMs)) continue;
+      for (const [event, value] of counts) r.observe(value, { account, event });
+    }
+  });
+
   const errors = meter.createCounter('brevo.exporter.poll_errors', { description: 'Failed polls (per process lifetime)', unit: '{error}' });
 
   return {
     recordSuccess: (s, at) => { latest.set(s.account, { snap: s, at }); },
+    recordFailures: (account, counts, at) => { failures.set(account, { counts, at }); },
     recordError: (account, reason) => { errors.add(1, { account, reason }); },
     exportFailures: () => state.failures,
     flush: () => provider.forceFlush(),

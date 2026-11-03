@@ -12,9 +12,20 @@ export function localDay(now: Date, timezone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
+/**
+ * The day to ask Brevo for: the account's local day, but never later than Brevo's own (UTC) date,
+ * because the API rejects future dates with a 400. Around local midnight (00:00 to 01:00 or 02:00 in
+ * Berlin) this means the previous day's report is still shown.
+ */
+export function queryDay(now: Date, timezone: string): string {
+  const local = localDay(now, timezone);
+  const utc = localDay(now, 'UTC');
+  return local > utc ? utc : local;
+}
+
 export async function takeSnapshot(client: BrevoClient, cfg: AccountConfig, now: Date): Promise<AccountSnapshot> {
   const acct = await client.getAccount();
-  const day = localDay(now, cfg.timezone ?? acct.timezone);
+  const day = queryDay(now, cfg.timezone ?? acct.timezone);
   const sentToday = await client.getSentCount(day);
 
   const byApp = new Map<string, number>();

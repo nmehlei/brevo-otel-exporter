@@ -1,5 +1,7 @@
 export interface BrevoEvent { date: string; from: string; subject: string; messageId: string }
 
+export interface BrevoDeliveryEvent extends BrevoEvent { event: string; email?: string; reason?: string }
+
 export type BrevoErrorReason = 'http_4xx' | 'http_429' | 'http_5xx' | 'timeout' | 'network' | 'parse';
 
 export class BrevoError extends Error {
@@ -66,15 +68,21 @@ export class BrevoClient {
   }
 
   async listSendEvents(day: string): Promise<BrevoEvent[]> {
+    return this.listEvents(day, 'requests');
+  }
+
+  /** All events of one type for one day (account timezone day), 500 per page, deduplicated by message id + date. */
+  async listEvents(day: string, event: string): Promise<BrevoDeliveryEvent[]> {
     const seen = new Set<string>();
-    const all: BrevoEvent[] = [];
+    const all: BrevoDeliveryEvent[] = [];
     for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
-      const d = await this.get(`/smtp/statistics/events?startDate=${day}&endDate=${day}&event=requests&limit=${PAGE}&offset=${pageNo * PAGE}`);
+      const d = await this.get(`/smtp/statistics/events?startDate=${day}&endDate=${day}&event=${encodeURIComponent(event)}&limit=${PAGE}&offset=${pageNo * PAGE}`);
       const page: any[] = Array.isArray(d.events) ? d.events : [];
       for (const e of page) {
-        if (seen.has(e.messageId)) continue;   // offsets can shift while new sends arrive
-        seen.add(e.messageId);
-        all.push({ date: e.date, from: e.from, subject: e.subject, messageId: e.messageId });
+        const key = `${e.messageId}|${e.date}|${e.email ?? ''}`;
+        if (seen.has(key)) continue;   // offsets can shift while new events arrive
+        seen.add(key);
+        all.push({ date: e.date, from: e.from, subject: e.subject, messageId: e.messageId, event: e.event ?? event, email: e.email, reason: e.reason });
       }
       if (page.length < PAGE) return all;
     }

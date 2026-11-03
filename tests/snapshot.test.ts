@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { localDay, takeSnapshot } from '../src/snapshot.js';
+import { localDay, queryDay, takeSnapshot } from '../src/snapshot.js';
 import { BrevoError, type BrevoClient, type BrevoEvent } from '../src/brevo.js';
 import type { AccountConfig } from '../src/config.js';
 
@@ -20,6 +20,18 @@ describe('localDay', () => {
   it('uses the account timezone day', () => {
     expect(localDay(new Date('2026-11-01T23:30:00Z'), 'Europe/Berlin')).toBe('2026-11-02');
     expect(localDay(new Date('2026-11-01T23:30:00Z'), 'UTC')).toBe('2026-11-01');
+  });
+});
+
+describe('queryDay', () => {
+  it('never goes beyond Brevo\'s own (UTC) date, which rejects future dates with a 400', () => {
+    // 00:14 in Berlin on the 3rd, but it is still the 2nd in UTC
+    expect(queryDay(new Date('2026-11-02T23:14:00Z'), 'Europe/Berlin')).toBe('2026-11-02');
+  });
+  it('keeps the local day when it is not ahead of UTC', () => {
+    expect(queryDay(new Date('2026-11-02T10:00:00Z'), 'Europe/Berlin')).toBe('2026-11-02');
+    expect(queryDay(new Date('2026-11-02T03:00:00Z'), 'America/New_York')).toBe('2026-11-01');
+    expect(queryDay(new Date('2026-11-02T10:00:00Z'), 'UTC')).toBe('2026-11-02');
   });
 });
 

@@ -6,7 +6,17 @@ export interface AttributionRule { app: string; tag?: string; sender?: string; s
 export interface AccountConfig {
   name: string; apiKey: string; dailyLimit: number; timezone?: string; rules: AttributionRule[];
 }
+export const FAILURE_EVENT_TYPES = ['hardBounces', 'softBounces', 'blocked', 'spam', 'deferred', 'invalid', 'error'] as const;
+export type FailureEventType = (typeof FAILURE_EVENT_TYPES)[number];
+export interface EventsConfig {
+  enabled: boolean; types: FailureEventType[]; intervalSeconds: number; statePath?: string;
+  includeSubject: boolean; includeRecipientDomain: boolean;
+}
+
 export interface Config {
+  events: EventsConfig;
+  /** Also export the exporter's own log lines over OTLP. */
+  logs: boolean;
   accounts: AccountConfig[];
   intervalSeconds: number;
   otlp: { endpoint: string; username?: string; password?: string; headers?: Record<string, string> };
@@ -24,7 +34,7 @@ const rule = z.object({
   }, { message: 'invalid subject regex' });
 
 const account = z.object({
-  name: z.string().min(1),
+  name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'use letters, digits, dot, dash or underscore (it is used in file names)'),
   apiKeyEnv: z.string().optional(),
   apiKeyFile: z.string().optional(),
   dailyLimit: z.number().int().positive(),
@@ -34,7 +44,18 @@ const account = z.object({
   rules: z.array(rule).default([]),
 }).refine((a) => !!a.apiKeyEnv !== !!a.apiKeyFile, { message: 'set either apiKeyEnv or apiKeyFile (exactly one)' });
 
+const events = z.object({
+  enabled: z.boolean().default(false),
+  types: z.array(z.enum(FAILURE_EVENT_TYPES)).min(1).default([...FAILURE_EVENT_TYPES]),
+  intervalSeconds: z.number().int().min(60).default(900),
+  statePath: z.string().optional(),
+  includeSubject: z.boolean().default(true),
+  includeRecipientDomain: z.boolean().default(true),
+}).strict().default({ enabled: false, types: [...FAILURE_EVENT_TYPES], intervalSeconds: 900, includeSubject: true, includeRecipientDomain: true });
+
 const schema = z.object({
+  events,
+  logs: z.boolean().default(false),
   intervalSeconds: z.number().int().min(30).default(300),
   otlp: z.object({
     endpoint: z.string().url(),
@@ -69,6 +90,8 @@ export function loadConfig(path: string, env: NodeJS.ProcessEnv): Config {
   if (c.otlp.passwordEnv && !password) throw new Error(`OTLP password variable ${c.otlp.passwordEnv} is not set`);
   return {
     accounts,
+    events: c.events,
+    logs: c.logs,
     intervalSeconds: c.intervalSeconds,
     otlp: { endpoint: c.otlp.endpoint.replace(/\/(v1\/metrics)?\/?$/, ''), username: c.otlp.username, password, headers: c.otlp.headers },
   };

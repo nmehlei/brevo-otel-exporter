@@ -76,4 +76,29 @@ accounts:
     expect(() => loadConfig(write('otlp: [unclosed token-ABC123'), {})).toThrow(/yaml/i);
     try { loadConfig(write('otlp: [unclosed token-ABC123'), {}); } catch (e) { expect(String(e)).not.toContain('token-ABC123'); }
   });
+  it('defaults: events disabled, logs opt-in', () => {
+    const c = loadConfig(write(base()), { BREVO_KEY: 'x' });
+    expect(c.events.enabled).toBe(false);
+    expect(c.logs).toBe(false);
+    expect(c.events.types).toContain('hardBounces');
+    expect(c.events.intervalSeconds).toBe(900);
+  });
+  it('reads an events block', () => {
+    const yaml = base('events:\n  enabled: true\n  types: [error, blocked]\n  statePath: /tmp/s.json\n  includeSubject: false\nlogs: false\n');
+    const c = loadConfig(write(yaml), { BREVO_KEY: 'x' });
+    expect(c.events).toMatchObject({ enabled: true, types: ['error', 'blocked'], statePath: '/tmp/s.json', includeSubject: false });
+    expect(c.logs).toBe(false);
+  });
+  it('rejects an unknown event type', () => {
+    expect(() => loadConfig(write(base('events:\n  enabled: true\n  types: [nope]\n')), { BREVO_KEY: 'x' })).toThrow();
+  });
+  it('rejects a misspelled key in the events block', () => {
+    expect(() => loadConfig(write(base('events:\n  enabled: true\n  statepath: /tmp/x\n')), { BREVO_KEY: 'x' })).toThrow(/statepath|unrecognized/i);
+  });
+  it('rejects account names that are unsafe in a file name', () => {
+    for (const bad of ['a/b', '..', '.hidden', 'a b']) {
+      const yaml = base().replace('name: main', `name: "${bad}"`);
+      expect(() => loadConfig(write(yaml), { BREVO_KEY: 'x' })).toThrow();
+    }
+  });
 });

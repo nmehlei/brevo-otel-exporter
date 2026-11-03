@@ -3,6 +3,14 @@ otlp:
   endpoint: http://localhost:4318      # OTLP/HTTP base URL
   username: brevo-otel-exporter           # optional basic auth
   passwordEnv: OTLP_PASSWORD
+logs: true                             # also export the exporter's own log lines
+events:                                # delivery failures as log records (off by default)
+  enabled: false
+  # statePath: /data/events           # keeps "already exported" across restarts and --once runs
+  # intervalSeconds: 900
+  # types: [hardBounces, softBounces, blocked, spam, deferred, invalid, error]
+  # includeSubject: true
+  # includeRecipientDomain: true
 accounts:
   - name: main
     apiKeyEnv: BREVO_API_KEY           # or apiKeyFile: /run/secrets/brevo
