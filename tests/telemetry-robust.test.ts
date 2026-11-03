@@ -31,6 +31,21 @@ describe('stale snapshots', () => {
   });
 });
 
+describe('failure counts freshness', () => {
+  it('uses its own (longer) window so the gauge does not flap between events polls', async () => {
+    const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+    const reader = new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 });
+    const at = new Date('2026-11-02T10:00:00Z');
+    const t = createTelemetry({ endpoint: 'http://x' }, reader, { staleAfterMs: 900_000, failuresStaleAfterMs: 3 * 3_600_000, now: () => at.getTime() + 2 * 3_600_000 });
+    t.recordFailures('main', new Map([['error', 1]]), at);
+    await t.flush();
+    const names = new Set<string>();
+    for (const rm of exporter.getMetrics()) for (const sm of rm.scopeMetrics) for (const m of sm.metrics) if (m.dataPoints.length) names.add(m.descriptor.name);
+    expect(names.has('brevo.email.failed_today')).toBe(true);
+    await t.shutdown();
+  });
+});
+
 describe('trackExport', () => {
   it('counts failed exports and passes results through', async () => {
     const inner = { export: (_m: unknown, cb: (r: { code: number; error?: Error }) => void) => cb({ code: ExportResultCode.FAILED, error: new Error('401') }),

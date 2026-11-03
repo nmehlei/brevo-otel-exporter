@@ -79,7 +79,7 @@ export class BrevoClient {
       const d = await this.get(`/smtp/statistics/events?startDate=${day}&endDate=${day}&event=${encodeURIComponent(event)}&limit=${PAGE}&offset=${pageNo * PAGE}`);
       const page: any[] = Array.isArray(d.events) ? d.events : [];
       for (const e of page) {
-        const key = `${e.messageId}|${e.date}`;
+        const key = `${e.messageId}|${e.date}|${e.email ?? ''}`;
         if (seen.has(key)) continue;   // offsets can shift while new events arrive
         seen.add(key);
         all.push({ date: e.date, from: e.from, subject: e.subject, messageId: e.messageId, event: e.event ?? event, email: e.email, reason: e.reason });

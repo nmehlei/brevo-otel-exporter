@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryLogRecordExporter, SimpleLogRecordProcessor } from '@opentelemetry/sdk-logs';
-import { createLogSink } from '../src/logs.js';
+import { createLogSink, trackLogExport } from '../src/logs.js';
 
 function setup() {
   const exporter = new InMemoryLogRecordExporter();
@@ -35,5 +35,17 @@ describe('log sink', () => {
     sink.emit('info', 'x'); await sink.flush();
     expect(exporter.getFinishedLogRecords()[0]!.resource.attributes['service.name']).toBe('brevo-otel-exporter');
     await sink.shutdown();
+  });
+});
+
+describe('trackLogExport', () => {
+  it('counts failed exports and passes results through', async () => {
+    const inner = { export: (_l: unknown, cb: (r: { code: number; error?: Error }) => void) => cb({ code: 1, error: new Error('401') }),
+      forceFlush: async () => {}, shutdown: async () => {} };
+    const state = { failures: 0, lastError: '' };
+    const wrapped = trackLogExport(inner as never, state);
+    const res = await new Promise<{ code: number }>((r) => wrapped.export([] as never, r));
+    expect(res.code).toBe(1);
+    expect(state).toEqual({ failures: 1, lastError: '401' });
   });
 });

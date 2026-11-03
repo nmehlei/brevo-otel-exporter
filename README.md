@@ -22,23 +22,40 @@ Every `intervalSeconds` (default 300) the exporter polls each configured account
 | `brevo.email.sent_today.by_app` | gauge | `account`, `app` | Sends today per app; the rest is `app="unattributed"` |
 | `brevo.email.failed_today` | gauge | `account`, `event` | Failure events seen today per type (only with `events.enabled`; zeros included) |
 | `brevo.exporter.last_success_timestamp` | gauge | `account` | Unix seconds of the last good poll |
-| `brevo.exporter.poll_errors` | counter | `account`, `reason` | Failed polls (`http_429`, `http_5xx`, `http_4xx`, `timeout`, `network`, `parse`, `unexpected`) |
+| `brevo.exporter.poll_errors` | counter | `account`, `reason` | Failed polls: `http_429`, `http_5xx`, `http_4xx`, `timeout`, `network`, `parse`, `unexpected`; event polls are prefixed `events_` (e.g. `events_log_export` = the OTLP log export failed) |
 
 ## Logs
 
-- **Delivery failures** (`events.enabled: true`): every `hardBounces`, `softBounces`, `blocked`, `spam`,
-  `deferred`, `invalid` and `error` event becomes one OTLP log record, exactly once, with the event time as
-  timestamp, severity `ERROR` (`WARN` for soft bounces and deferrals) and the attributes `brevo.account`,
-  `brevo.event`, `brevo.message_id`, `brevo.sender`, `brevo.reason`, `app` (same attribution rules as above),
-  plus optionally `recipient.domain` and `email.subject`. **The recipient's address is never exported**, only
-  its domain. Use `includeSubject: false` / `includeRecipientDomain: false` to drop those too.
-  Typical findings: "sender not valid" (an unvalidated sender address), blocklisted sending IPs.
-- **The exporter's own log lines** (`logs: true`, default) are exported next to the JSON lines on stdout.
+Logs are opt-in.
 
-The first run is a **baseline**: events that already exist are marked as seen and not replayed. Give
-`events.statePath` a writable path so that state survives restarts and `--once` runs (the file is
-`<statePath>.<account>.json`); without it the baseline is redone at every start.
-Events are polled every `events.intervalSeconds` (default 900), one API call per type per day.
+- **Delivery failures** (`events.enabled: true`): every `hardBounces`, `softBounces`, `blocked`, `spam`,
+  `deferred`, `invalid` and `error` event becomes one OTLP log record, with the event time as timestamp,
+  severity `ERROR` (`WARN` for soft bounces and deferrals) and the attributes `brevo.account`, `brevo.event`,
+  `brevo.message_id`, `brevo.sender`, `brevo.reason`, `app`, plus optionally `recipient.domain` and
+  `email.subject` (`includeSubject` / `includeRecipientDomain` turn those off).
+  **Privacy:** the recipient's address is never exported, only its domain. Email addresses that appear
+  inside Brevo's free text (`reason`, `subject`) are redacted to `<redacted>@domain`. The subject can still
+  contain other personal data such as names: set `includeSubject: false` if that matters.
+  Typical findings: "sender not valid" (an unvalidated sender address), blocklisted sending IPs.
+  **`app`** is derived from `sender` and `subject` rules only. Brevo's events carry no tag, so tag rules do
+  not apply here: a failure of a tag-attributed app shows as `unattributed` unless a sender or subject
+  rule also matches it.
+- **The exporter's own log lines** (`logs: true`) are exported next to the JSON lines on stdout.
+
+**Delivery guarantee: at least once.** An event counts as exported only after the OTLP log export succeeded;
+if it failed, the event is retried on the next poll (it may then appear twice, never zero times). The very
+first run is a **baseline**: events that already exist are marked as seen and not replayed.
+`events.statePath` (`<statePath>.<account>.json`) keeps that state, and the last polled day, across restarts.
+It is **required with `--once`**, otherwise every run would be a fresh baseline. A corrupt state file is
+moved to `*.corrupt` and logged as a warning.
+
+Events are polled every `events.intervalSeconds` (default 900) in loop mode, one API call per type per
+day. With `--once` every run polls them, so a 5-minute cron costs about 7 extra calls per run.
+
+## Resource attributes
+
+The standard `OTEL_RESOURCE_ATTRIBUTES` (e.g. `nme_tenant=acme`) and `OTEL_SERVICE_NAME` are honoured for
+metrics and logs. Default service name: `brevo-otel-exporter`.
 
 The daily limit is **not exposed by the Brevo API**, so you configure it (free tier: 300).
 
@@ -79,7 +96,7 @@ the per-app sum exceeds `sent_today`.
   (300/day) fits in one page; for high-volume accounts prefer `tag` rules, which need no event listing.
 - If an account keeps failing, its quota gauges are dropped after 3 intervals (never shown as current
   across midnight); `brevo.exporter.last_success_timestamp` stays so the staleness alert can fire.
-- Failed OTLP exports are logged (`otlp export failed`) and make `--once` exit 1.
+- Failed OTLP exports (metrics and logs) are logged (`otlp export failed`, `otlp log export failed`) and make `--once` exit 1.
 - `brevo.exporter.poll_errors` counts per process lifetime, so it is meaningful in loop mode. With
   `--once` (a fresh process per run) alert on `last_success_timestamp` and the exit code instead.
 - Logs carry no trace or span IDs: the exporter creates no spans (the OpenTelemetry JS trace SDK and the log/metric SDKs are not yet released on a compatible version line).

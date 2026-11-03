@@ -1,7 +1,7 @@
 import { MeterProvider, PeriodicExportingMetricReader, type MetricReader, type PushMetricExporter } from '@opentelemetry/sdk-metrics';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { ExportResultCode } from '@opentelemetry/core';
-import { resourceFromAttributes } from '@opentelemetry/resources';
+import { buildResource } from './resource.js';
 import type { Config } from './config.js';
 import type { AccountSnapshot } from './snapshot.js';
 
@@ -28,6 +28,8 @@ export interface TelemetryOptions {
   intervalMs?: number;
   /** Quota gauges of an account are dropped when its last good poll is older than this. */
   staleAfterMs?: number;
+  /** Failure counts are refreshed only every events interval, so they get their own (longer) window. */
+  failuresStaleAfterMs?: number;
   now?: () => number;
   onExportError?: (message: string) => void;
 }
@@ -65,7 +67,7 @@ export function createTelemetry(otlp: Config['otlp'], reader?: MetricReader, opt
     exportIntervalMillis: opts.intervalMs ?? 60_000,
   });
   const provider = new MeterProvider({
-    resource: resourceFromAttributes({ 'service.name': 'brevo-otel-exporter' }),
+    resource: buildResource(),
     readers: [metricReader],
   });
   const meter = provider.getMeter('brevo-otel-exporter');
@@ -94,7 +96,7 @@ export function createTelemetry(otlp: Config['otlp'], reader?: MetricReader, opt
 
   meter.createObservableGauge('brevo.email.failed_today', { description: 'Failure events seen today per type', unit: '{email}' }).addCallback((r) => {
     for (const [account, { counts, at }] of failures) {
-      if (!fresh(at)) continue;
+      if (now() - at.getTime() > (opts.failuresStaleAfterMs ?? staleAfterMs)) continue;
       for (const [event, value] of counts) r.observe(value, { account, event });
     }
   });

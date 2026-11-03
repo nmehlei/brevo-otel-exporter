@@ -16,3 +16,8 @@ Prometheus-style query languages they become underscores (`brevo_email_sent_toda
 The "stale" alert matters: if Brevo's API is unreachable, the quota gauges are dropped after 3 intervals
 (so they do not show yesterday's numbers), and `last_success_timestamp` is the only signal left.
 `poll_errors` is per process: use it in loop mode only; with `--once` rely on the staleness alert.
+
+Note on quota alerts around midnight: Brevo rejects dates later than its own (UTC) date, so for 1 to 2 hours
+after local midnight the exporter still reports the previous day's `sent_today`. A quota alert that fired
+late in the evening can therefore keep firing until UTC midnight even though Brevo's quota has not reset
+yet. Use `brevo.email.remaining` for "how much can I still send right now".

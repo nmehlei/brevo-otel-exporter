@@ -21,16 +21,18 @@ function harness(events: Record<string, BrevoDeliveryEvent[]>, clock = { t: Date
   const failures: Map<string, number>[] = [];
   const errors: string[] = [];
   const logsOut: Record<string, unknown>[] = [];
+  const exp = { failures: 0, failNextFlush: false };
   const client = { getAccount: async () => ({ timezone: 'Europe/Berlin', remainingCredits: 1 }),
     listEvents: async (_d: string, t: string) => events[t] ?? [] } as unknown as BrevoClient;
   const tracker = new EventTracker();
   const deps: Deps = {
     clientFor: () => client, trackerFor: () => tracker,
     telemetry: { recordFailures: (_a: string, c: Map<string, number>) => failures.push(c), recordError: (a: string, r: string) => errors.push(`${a}:${r}`) } as unknown as Telemetry,
-    logs: { emit: (level, body, attrs) => emitted.push({ level, body, attrs: attrs ?? {} }), flush: async () => {}, shutdown: async () => {} } as LogSink,
+    logs: { emit: (level: string, body: string, attrs?: Record<string, unknown>) => emitted.push({ level, body, attrs: attrs ?? {} }),
+      flush: async () => { if (exp.failNextFlush) { exp.failures++; exp.failNextFlush = false; } }, exportFailures: () => exp.failures, shutdown: async () => {} } as unknown as LogSink,
     now: () => new Date(clock.t), log: (e) => logsOut.push(e),
   };
-  return { deps, emitted, failures, errors, logsOut, clock };
+  return { deps, emitted, failures, errors, logsOut, clock, exp, tracker };
 }
 
 describe('pollEvents', () => {
@@ -114,5 +116,36 @@ describe('pollEvents', () => {
     (h.deps.clientFor('' as never) as unknown as { listEvents: unknown }).listEvents = async (d: string) => { asked.push(d); return []; };
     await pollEvents(cfg(), h.deps, newEventsState());
     expect(new Set(asked)).toEqual(new Set(['2026-11-02']));
+  });
+  it('does not lose events when the OTLP log export fails: rolls back and re-emits on the next poll', async () => {
+    const events: Record<string, BrevoDeliveryEvent[]> = {};
+    const h = harness(events); const state = newEventsState();
+    await pollEvents(cfg(), h.deps, state);                    // baseline
+    events.error = [ev('lost')]; h.clock.t += 901_000;
+    h.exp.failNextFlush = true;
+    await pollEvents(cfg(), h.deps, state);
+    expect(h.errors).toEqual(['main:events_log_export']);
+    expect(h.emitted).toHaveLength(1);
+    h.clock.t += 901_000;
+    await pollEvents(cfg(), h.deps, state);                    // exporter healthy again
+    expect(h.emitted).toHaveLength(2);                          // same event emitted again (at-least-once)
+    h.clock.t += 901_000;
+    await pollEvents(cfg(), h.deps, state);
+    expect(h.emitted).toHaveLength(2);                          // and now committed
+  });
+  it('reads the previous day after a restart (--once) using the persisted last day', async () => {
+    const asked: string[] = [];
+    const h = harness({}, { t: Date.parse('2026-11-02T20:00:00Z') });
+    (h.deps.clientFor('' as never) as unknown as { listEvents: unknown }).listEvents = async (d: string) => { asked.push(d); return []; };
+    await pollEvents(cfg(), h.deps, newEventsState());           // process 1
+    asked.length = 0;
+    h.clock.t = Date.parse('2026-11-03T08:00:00Z');
+    await pollEvents(cfg(), h.deps, newEventsState());           // process 2: fresh in-memory state, same tracker/state file
+    expect(new Set(asked)).toEqual(new Set(['2026-11-02', '2026-11-03']));
+  });
+  it('counts the queried type in the failure counts', async () => {
+    const h = harness({ error: [ev('a', 'Error')] });
+    await pollEvents(cfg(), h.deps, newEventsState());
+    expect(h.failures[0]!.get('error')).toBe(1);
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { collectFailures, EventTracker, toFailureEvent, severityFor } from '../src/events.js';
+import { collectFailures, EventTracker, toFailureEvent, severityFor, redact } from '../src/events.js';
 import type { BrevoClient, BrevoDeliveryEvent } from '../src/brevo.js';
 
 const raw = (o: Partial<BrevoDeliveryEvent> = {}): BrevoDeliveryEvent => ({
@@ -24,6 +24,27 @@ describe('toFailureEvent', () => {
   });
   it('truncates very long reasons', () => {
     expect(toFailureEvent(raw({ reason: 'x'.repeat(2000) })).reason.length).toBeLessThanOrEqual(500);
+  });
+});
+
+describe('redaction', () => {
+  it('removes email addresses from reason and subject but keeps the domain', () => {
+    const f = toFailureEvent(raw({ reason: '550 5.1.1 <jane.doe@example.org>: Recipient address rejected', subject: 'Hello Jane (jane.doe@example.org)' }));
+    expect(f.reason).toBe('550 5.1.1 <<redacted>@example.org>: Recipient address rejected');
+    expect(f.subject).toBe('Hello Jane (<redacted>@example.org)');
+    expect(JSON.stringify(f)).not.toMatch(/jane\.doe/i);
+  });
+  it('redact leaves text without addresses alone', () => expect(redact('sender not valid')).toBe('sender not valid'));
+});
+
+describe('invalid input', () => {
+  it('skips events with an unparseable date instead of failing the poll', async () => {
+    const client = { listEvents: async () => [raw({ date: 'garbage' }), raw({ messageId: '<ok@x>' })] } as unknown as BrevoClient;
+    expect((await collectFailures(client, '2026-11-02', ['error'])).map((e) => e.messageId)).toEqual(['<ok@x>']);
+  });
+  it('uses the queried type, not the type spelled in the response', async () => {
+    const client = { listEvents: async () => [raw({ event: 'Error' })] } as unknown as BrevoClient;
+    expect((await collectFailures(client, '2026-11-02', ['error']))[0]!.event).toBe('error');
   });
 });
 
@@ -82,8 +103,39 @@ describe('EventTracker', () => {
     const t = new EventTracker(p);
     expect(t.fresh([fe('a')], '2026-11-02')).toEqual([]);
   });
-  it('does not write a state file without a path', () => {
-    const t = new EventTracker(); t.fresh([fe('a')], 'd'); t.save();
-    expect(existsSync('state.json')).toBe(false);
+  it('save() without a path is a no-op', () => {
+    const t = new EventTracker(); t.fresh([fe('a')], 'd');
+    expect(() => t.save()).not.toThrow();
+  });
+  it('distinguishes two recipients of the same message', () => {
+    const t = new EventTracker(); t.fresh([], 'd');
+    const a = toFailureEvent(raw({ email: 'a@x.org' })); const b = toFailureEvent(raw({ email: 'b@x.org' }));
+    expect(t.fresh([a, b], 'd')).toHaveLength(2);
+  });
+  it('rollback() un-sees staged events and restores the baseline state', () => {
+    const t = new EventTracker(); t.fresh([], 'd'); t.commit();
+    expect(t.fresh([fe('a')], 'd')).toHaveLength(1);
+    t.rollback();
+    expect(t.fresh([fe('a')], 'd')).toHaveLength(1);       // emitted again
+    t.commit();
+    expect(t.fresh([fe('a')], 'd')).toHaveLength(0);
+    const fresh = new EventTracker(); fresh.fresh([fe('a')], 'd'); fresh.rollback();
+    expect(fresh.fresh([fe('a')], 'd')).toEqual([]);        // still a baseline run
+  });
+  it('persists lastDay', () => {
+    const p = join(dir(), 'state.json');
+    const t1 = new EventTracker(p); t1.fresh([], 'd'); t1.lastDay = '2026-11-02'; t1.save();
+    expect(new EventTracker(p).lastDay).toBe('2026-11-02');
+  });
+  it('moves a corrupt state file aside and reports it', () => {
+    const p = join(dir(), 'state.json'); writeFileSync(p, '{not json');
+    const t = new EventTracker(p);
+    expect(t.loadWarning).toMatch(/corrupt/i);
+    expect(existsSync(`${p}.corrupt`)).toBe(true);
+    expect(existsSync(p)).toBe(false);
+  });
+  it('names the path and error code when the state cannot be written', () => {
+    const t = new EventTracker(join(dir(), 'missing-dir', 'state.json')); t.fresh([fe('a')], 'd');
+    expect(() => t.save()).toThrow(/missing-dir.*ENOENT/);
   });
 });

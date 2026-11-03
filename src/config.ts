@@ -34,7 +34,7 @@ const rule = z.object({
   }, { message: 'invalid subject regex' });
 
 const account = z.object({
-  name: z.string().min(1),
+  name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'use letters, digits, dot, dash or underscore (it is used in file names)'),
   apiKeyEnv: z.string().optional(),
   apiKeyFile: z.string().optional(),
   dailyLimit: z.number().int().positive(),
@@ -51,11 +51,11 @@ const events = z.object({
   statePath: z.string().optional(),
   includeSubject: z.boolean().default(true),
   includeRecipientDomain: z.boolean().default(true),
-}).default({ enabled: false, types: [...FAILURE_EVENT_TYPES], intervalSeconds: 900, includeSubject: true, includeRecipientDomain: true });
+}).strict().default({ enabled: false, types: [...FAILURE_EVENT_TYPES], intervalSeconds: 900, includeSubject: true, includeRecipientDomain: true });
 
 const schema = z.object({
   events,
-  logs: z.boolean().default(true),
+  logs: z.boolean().default(false),
   intervalSeconds: z.number().int().min(30).default(300),
   otlp: z.object({
     endpoint: z.string().url(),
